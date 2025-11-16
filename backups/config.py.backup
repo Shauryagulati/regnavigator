@@ -1,0 +1,35 @@
+import os
+from pathlib import Path
+
+# Paths
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_ROOT = BASE_DIR / "data"
+CHROMA_DIR = BASE_DIR / "chroma_store"
+CHROMA_DIR.mkdir(exist_ok=True)
+BM25_DIR = BASE_DIR / "bm25_store"
+BM25_DIR.mkdir(exist_ok=True)
+
+# Hugging Face cache
+HF_CACHE_DIR = os.getenv("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
+os.environ.setdefault("HF_HOME", HF_CACHE_DIR)
+os.environ.setdefault("TRANSFORMERS_CACHE", HF_CACHE_DIR)
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", HF_CACHE_DIR)
+
+# Models
+DEFAULT_JURISDICTION = "CA"
+BGE_M3_MODEL = "BAAI/bge-m3"
+BGE_RERANKER_MODEL = "BAAI/bge-reranker-base"
+BGE_RERANKER = BGE_RERANKER_MODEL
+
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+
+# Retrieval tuning
+TOP_K_DENSE = int(os.getenv("TOP_K_DENSE", "25"))
+TOP_K_BM25 = int(os.getenv("TOP_K_BM25", "100"))
+MERGE_WEIGHT_DENSE = float(os.getenv("MERGE_WEIGHT_DENSE", "0.4"))
+MERGE_WEIGHT_SPARSE = float(os.getenv("MERGE_WEIGHT_SPARSE", "0.6"))
+RERANK_WEIGHT = float(os.getenv("RERANK_WEIGHT", "0.35"))
+
+def collection_name(jurisdiction: str) -> str:
+    return f"regulations_{jurisdiction.lower()}"

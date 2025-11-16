@@ -1,0 +1,27 @@
+import re
+from typing import Generator, Dict
+
+HEADER_RE = re.compile(r"^(Section|Article|Chapter|§)\b", re.IGNORECASE)
+PARA_RE = re.compile(r"(.*?)(?:\n\s*\n|$)", re.DOTALL)
+
+def split_with_offsets(text: str, max_len: int = 800) -> Generator[Dict, None, None]:
+    for m in PARA_RE.finditer(text):
+        block = m.group(1)
+        start, end = m.span(1)
+        block = block.strip()
+        if not block:
+            continue
+
+        if len(block) > max_len:
+            i = 0
+            while i < len(block):
+                sub = block[i:i+max_len]
+                sub_start = start + i
+                sub_end = sub_start + len(sub)
+                yield {"text": sub, "start": sub_start, "end": sub_end}
+                i += max_len
+        else:
+            yield {"text": block, "start": start, "end": end}
+
+def detect_header(passage: str):
+    return passage.strip() if HEADER_RE.match(passage) else None

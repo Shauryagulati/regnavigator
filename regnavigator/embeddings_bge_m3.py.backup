@@ -1,0 +1,211 @@
+from typing import List, Dict, Any, Optional, Tuple
+import hashlib
+import numpy as np
+from FlagEmbedding import BGEM3FlagModel
+import torch
+import logging
+
+logger = logging.getLogger(__name__)
+
+BGE_M3_MODEL = "BAAI/bge-m3"
+
+
+def _stable_token_to_int(tok: str) -> int:
+    """Convert token to stable integer ID"""
+    return int(hashlib.md5(tok.encode("utf-8")).hexdigest()[:12], 16)
+
+
+def _normalize_sparse(weights: Optional[Dict[Any, float]]) -> Dict[str, List[float]]:
+    """Normalize sparse embeddings to consistent format"""
+    if not weights:
+        return {"indices": [], "values": []}
+    
+    indices, values = [], []
+    for k, v in weights.items():
+        if isinstance(k, int):
+            idx = k
+        elif isinstance(k, str):
+            try:
+                idx = int(k)
+            except ValueError:
+                idx = _stable_token_to_int(k)
+        else:
+            idx = int(k)
+        indices.append(idx)
+        values.append(float(v))
+    
+    return {"indices": indices, "values": values}
+
+
+def _l2_normalize(mat: np.ndarray, axis: int = 1, eps: float = 1e-12) -> np.ndarray:
+    """L2 normalize vectors for cosine similarity"""
+    norms = np.linalg.norm(mat, axis=axis, keepdims=True)
+    norms = np.maximum(norms, eps)
+    return mat / norms
+
+
+class EmbeddingModel:
+    """
+    BGE-M3 embedding model with improved configuration
+    """
+    
+    def __init__(
+        self,
+        model_name: str = BGE_M3_MODEL,
+        device: Optional[str] = None,
+        use_fp16: Optional[bool] = None,
+        batch_size: int = 16,
+        max_length: int = 8192,
+        normalize_embeddings: bool = True
+    ):
+        """
+        Initialize BGE-M3 model
+        
+        Args:
+            model_name: HuggingFace model name
+            device: 'cuda' or 'cpu' (auto-detected if None)
+            use_fp16: Use FP16 precision (auto: True for GPU, False for CPU)
+            batch_size: Encoding batch size
+            max_length: Maximum token length
+            normalize_embeddings: L2 normalize dense embeddings
+        """
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        if use_fp16 is None:
+            use_fp16 = device == "cuda"
+        
+        logger.info(f"[embeddings] Initializing BGE-M3 on {device} (fp16={use_fp16})")
+        
+        try:
+            self.model = BGEM3FlagModel(
+                model_name,
+                use_fp16=use_fp16,
+                device=device
+            )
+            logger.info("[embeddings] ✅ BGE-M3 loaded successfully")
+        except Exception as e:
+            logger.error(f"[embeddings] ❌ Failed to load BGE-M3: {e}")
+            raise
+        
+        self.device = device
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self.normalize_embeddings = normalize_embeddings
+    
+    def _encode(self, texts: List[str]) -> Tuple[List[List[float]], List[Dict[str, List[float]]]]:
+        """
+        Encode texts to dense and sparse embeddings
+        
+        Returns:
+            Tuple of (dense_embeddings, sparse_embeddings)
+        """
+        if not texts:
+            return [], []
+        
+        # Encode with BGE-M3
+        try:
+            out = self.model.encode(
+                texts,
+                batch_size=self.batch_size,
+                max_length=self.max_length,
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=False  # Disable ColBERT for speed
+            )
+        except Exception as e:
+            logger.error(f"[embeddings] Encoding failed: {e}")
+            raise
+        
+        # Extract dense embeddings
+        dense = out.get("dense_vecs")
+        if dense is None:
+            raise ValueError("BGE-M3 did not return dense_vecs")
+        
+        # Extract sparse embeddings (lexical weights)
+        lexical = None
+        for key in ["lexical_weights", "sparse_vecs", "lexical_vecs"]:
+            if key in out:
+                lexical = out[key]
+                break
+        
+        # Normalize sparse format
+        if lexical:
+            sparse = [_normalize_sparse(w) for w in lexical]
+        else:
+            sparse = [{"indices": [], "values": []} for _ in dense]
+        
+        # Ensure matching lengths
+        if len(sparse) != len(dense):
+            logger.warning(f"[embeddings] Sparse/dense length mismatch: {len(sparse)} vs {len(dense)}")
+            while len(sparse) < len(dense):
+                sparse.append({"indices": [], "values": []})
+            sparse = sparse[:len(dense)]
+        
+        # Normalize dense embeddings
+        if self.normalize_embeddings:
+            dense_np = _l2_normalize(np.array(dense, dtype=np.float32), axis=1)
+            dense = dense_np.tolist()
+        
+        return dense, sparse
+    
+    def encode_texts(self, texts: List[str]) -> Dict[str, Any]:
+        """
+        Encode multiple texts for indexing
+        
+        Args:
+            texts: List of text strings
+            
+        Returns:
+            Dict with 'dense' and 'sparse' keys
+            
+        Note: 
+            - 'dense' vectors (1024-dim) are stored in ChromaDB
+            - 'sparse' vectors are NOT stored (local ChromaDB limitation)
+            - BM25 handles sparse/keyword matching instead
+        """
+        dense, sparse = self._encode(texts)
+        
+        logger.info(f"[embeddings] Encoded {len(texts)} texts -> {len(dense)} dense, {len(sparse)} sparse")
+        logger.debug("[embeddings] Note: sparse vectors not used in local ChromaDB (BM25 provides sparse matching)")
+        
+        return {
+            "dense": dense,
+            "sparse": sparse  # Returned for API compatibility but not stored
+        }
+    
+    def encode_query(self, text: str) -> Dict[str, Any]:
+        """
+        Encode single query text
+        
+        Args:
+            text: Query string
+            
+        Returns:
+            Dict with 'dense' and 'sparse' keys
+        """
+        dense, sparse = self._encode([text])
+        
+        return {
+            "dense": dense[0] if dense else [],
+            "sparse": sparse[0] if sparse else {"indices": [], "values": []}
+        }
+    
+    def get_embedding_dim(self) -> int:
+        """Get dimension of dense embeddings"""
+        # BGE-M3 has 1024-dim embeddings
+        return 1024
+
+
+# Global model instance (lazy loaded)
+_global_model: Optional[EmbeddingModel] = None
+
+
+def get_embedding_model(**kwargs) -> EmbeddingModel:
+    """Get or create global embedding model instance"""
+    global _global_model
+    
+    if _global_model is None:
+        _global_model = EmbeddingModel(**kwargs)
+    
+    return _global_model

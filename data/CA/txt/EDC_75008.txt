@@ -1,0 +1,26 @@
+State of California
+EDUCATION CODE
+Section  75008
+75008. (a)  The colle ge shall de velop a Research and De velopment Unit that is
+student-centered and focused on the science of learning to ensure that the technology
+used by the college is working for the communities it is intended to serve.
+(b)  The Research and De velopment Unit shall be focused on le veraging current
+and future learning sciences technology, assessing data metrics within the technological
+infrastructure to gauge student progress in a course or pathway, informing instructional
+and support strategies, and improving on the functionality of the underlying technology.
+(c)  The Research and De velopment Unit shall focus on using technology , data
+science, behavioral science, machine learning, and artificial intelligence to build out
+student supports, such as, but not limited to, a virtual help desk which uses technology
+to respond to commonly ask ed questions from students at an y hour of the day and
+week.
+(d)  The Research and Development Unit shall share the data, metrics, and findings
+with the colle ge’s f aculty, administrators, and technologists to inform and e volve
+better teaching and student support practices.
+(e)  The Research and Development Unit shall regularly collaborate with the Digital
+Innovation and Infrastructure Division of the chancellor’s office to ensure integration,
+interoperability, and, where possible, use open standards.
+(f)  Insights from the Research and De velopment Unit shall be shared across the
+California Community Colleges through existing professional development channels
+to support campuses in accelerated adoption of demonstrated advancements in teaching,
+learning, and student supports throughout the system.
+(Added by Stats. 2018, Ch. 33, Sec. 18.  (AB 1809)  Effective June 27, 2018.)

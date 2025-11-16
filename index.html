@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <title>RegNavigator – AI Regulatory Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+            },
+          },
+        },
+      },
+    };
+  </script>
+</head>
+
+<body class="h-full bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-50 transition-colors">
+  <div class="min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur sticky top-0 z-10">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="h-9 w-9 flex items-center justify-center rounded-xl bg-brand-600 text-white text-lg font-semibold">
+            ⚖️
+          </div>
+          <div>
+            <h1 class="text-lg md:text-xl font-semibold">RegNavigator</h1>
+            <p class="text-xs md:text-sm text-slate-500 dark:text-slate-400">
+              AI-powered regulatory research with grounded citations
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+          <!-- Health -->
+          <div class="flex items-center gap-2 text-xs md:text-sm">
+            <span id="health-dot" class="h-2.5 w-2.5 rounded-full bg-slate-400"></span>
+            <span id="health-text" class="text-slate-500 dark:text-slate-400">Checking API…</span>
+          </div>
+
+          <!-- Jurisdiction (static for now) -->
+          <div class="hidden md:flex items-center gap-2 text-xs md:text-sm">
+            <span class="text-slate-500 dark:text-slate-400">Jurisdiction:</span>
+            <span class="px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs">
+              CA
+            </span>
+          </div>
+
+          <!-- Dark mode toggle -->
+          <button id="theme-toggle"
+                  class="inline-flex items-center justify-center h-8 w-8 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  title="Toggle dark mode">
+            <span id="theme-icon">🌙</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main -->
+    <main class="flex-1">
+      <div class="max-w-6xl mx-auto px-4 py-4 md:py-6 flex flex-col gap-4 h-[calc(100vh-4.5rem)]">
+        <!-- Chat area -->
+        <section class="flex-1 flex flex-col gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 shadow-sm">
+          <!-- Messages -->
+          <div id="messages"
+               class="flex-1 overflow-y-auto px-4 md:px-6 py-4 md:py-5 space-y-4 scroll-smooth">
+            <!-- Empty state -->
+            <div id="empty-state" class="text-center text-slate-400 dark:text-slate-500 text-sm pt-4">
+            <p>Ask a question to begin…</p>
+            </div>
+          </div>
+
+          <!-- Sources -->
+          <div id="sources-container"
+               class="border-t border-slate-200 dark:border-slate-800 px-4 md:px-6 py-3 hidden">
+            <div class="flex items-center justify-between mb-2">
+              <h2 class="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                📚 Sources Used
+              </h2>
+              <span id="sources-count" class="text-xs text-slate-500 dark:text-slate-400"></span>
+            </div>
+            <div id="sources" class="space-y-2 text-xs md:text-sm"></div>
+          </div>
+
+          <!-- Composer -->
+          <div class="border-t border-slate-200 dark:border-slate-800 px-4 md:px-6 py-3">
+            <form id="chat-form" class="flex items-end gap-3">
+              <textarea
+                id="user-input"
+                rows="1"
+                placeholder="Ask about a bill, definition, threshold, or requirement…"
+                class="flex-1 resize-none rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm md:text-base focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent placeholder:text-slate-400 dark:placeholder:text-slate-500"
+              ></textarea>
+              <button
+                id="send-btn"
+                type="submit"
+                class="inline-flex items-center justify-center rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-sm md:text-base font-medium px-4 md:px-5 py-2.5 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              >
+                <span id="send-label">Send</span>
+              </button>
+            </form>
+            <p class="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+              Press <span class="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">Enter</span> to send,
+              <span class="font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded">Shift+Enter</span> for newline.
+            </p>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // --- Config ---
+    const API_BASE = "http://127.0.0.1:8000";
+
+    // --- Session ID for multi-turn ---
+    let sessionId = localStorage.getItem("regnav_session_id");
+    if (!sessionId && window.crypto && crypto.randomUUID) {
+      sessionId = crypto.randomUUID();
+      localStorage.setItem("regnav_session_id", sessionId);
+    } else if (!sessionId) {
+      // fallback
+      sessionId = "session-" + Date.now();
+      localStorage.setItem("regnav_session_id", sessionId);
+    }
+
+    const messagesDiv = document.getElementById("messages");
+    const sourcesDiv = document.getElementById("sources");
+    const sourcesContainer = document.getElementById("sources-container");
+    const sourcesCount = document.getElementById("sources-count");
+    const chatForm = document.getElementById("chat-form");
+    const userInput = document.getElementById("user-input");
+    const sendBtn = document.getElementById("send-btn");
+    const sendLabel = document.getElementById("send-label");
+    const healthDot = document.getElementById("health-dot");
+    const healthText = document.getElementById("health-text");
+    const themeToggle = document.getElementById("theme-toggle");
+    const themeIcon = document.getElementById("theme-icon");
+
+    // --- Theme handling ---
+    const storedTheme = localStorage.getItem("regnav_theme");
+    if (storedTheme === "dark" || (!storedTheme && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+      document.documentElement.classList.add("dark");
+      themeIcon.textContent = "☀️";
+    }
+
+    themeToggle.addEventListener("click", () => {
+      const isDark = document.documentElement.classList.toggle("dark");
+      localStorage.setItem("regnav_theme", isDark ? "dark" : "light");
+      themeIcon.textContent = isDark ? "☀️" : "🌙";
+    });
+
+    // --- Health check ---
+    async function checkHealth() {
+      try {
+        const res = await fetch(`${API_BASE}/health`);
+        const data = await res.json();
+        if (data.status === "ok") {
+          healthDot.className = "h-2.5 w-2.5 rounded-full bg-emerald-500";
+          healthText.textContent = "API online";
+        } else {
+          healthDot.className = "h-2.5 w-2.5 rounded-full bg-amber-400";
+          healthText.textContent = "API degraded";
+        }
+      } catch {
+        healthDot.className = "h-2.5 w-2.5 rounded-full bg-rose-500";
+        healthText.textContent = "API offline";
+      }
+    }
+    checkHealth();
+
+    // --- Helpers ---
+    function addMessage(role, content, options = {}) {
+      const wrapper = document.createElement("div");
+      const empty = document.getElementById("empty-state");
+      if (empty) empty.remove();
+      wrapper.className = `flex ${role === "user" ? "justify-end" : "justify-start"}`;
+
+      const bubble = document.createElement("div");
+      bubble.className = [
+        "max-w-2xl",
+        "px-4",
+        "py-3",
+        "rounded-2xl",
+        "text-sm",
+        "md:text-base",
+        "shadow-sm",
+        role === "user"
+          ? "bg-brand-600 text-white"
+          : "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-50",
+      ].join(" ");
+
+      bubble.innerHTML = content;
+      wrapper.appendChild(bubble);
+      messagesDiv.appendChild(wrapper);
+
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      return bubble;
+    }
+
+    function setLoading(isLoading) {
+      sendBtn.disabled = isLoading;
+      sendLabel.textContent = isLoading ? "Thinking…" : "Send";
+    }
+
+    function renderSources(citations) {
+      if (!citations || citations.length === 0) {
+        sourcesContainer.classList.add("hidden");
+        sourcesDiv.innerHTML = "";
+        sourcesCount.textContent = "";
+        return;
+      }
+
+      sourcesContainer.classList.remove("hidden");
+      sourcesCount.textContent = `${citations.length} chunk${citations.length > 1 ? "s" : ""}`;
+
+      sourcesDiv.innerHTML = citations
+        .map((c) => {
+          const header = c.header ? ` — <span class="text-slate-500 dark:text-slate-400">${c.header}</span>` : "";
+          return `
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/80 px-3 py-2.5">
+              <div class="flex justify-between items-center gap-2 text-xs md:text-sm">
+                <div>
+                  <span class="inline-flex items-center justify-center h-5 w-5 rounded-full bg-brand-600 text-white text-[11px] font-semibold mr-2">
+                    ${c.n}
+                  </span>
+                  <span class="font-medium text-slate-800 dark:text-slate-100">${c.source_file || "Unknown source"}</span>
+                  ${header}
+                </div>
+                <div class="text-[11px] text-slate-500 dark:text-slate-400">
+                  Page ${c.page || "?"} · ${c.jurisdiction || ""}
+                </div>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    // --- Form handler ---
+    chatForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const query = userInput.value.trim();
+      if (!query) return;
+
+      // Add user message
+      addMessage("user", query.replace(/\n/g, "<br>"));
+      userInput.value = "";
+      userInput.style.height = "auto";
+
+      // Add loading assistant bubble
+      const loadingBubble = addMessage("assistant", "⏳ Searching regulations and drafting answer…");
+      setLoading(true);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            jurisdiction: "CA",
+            top_k: 6,
+            session_id: sessionId,
+          }),
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`API error (${res.status}): ${errText}`);
+        }
+
+        const data = await res.json();
+
+        // Replace loading bubble content with real answer
+        loadingBubble.innerHTML = (data.answer || "No answer returned.").replace(/\n/g, "<br>");
+
+        // Render sources
+        renderSources(data.citations || []);
+      } catch (err) {
+        loadingBubble.innerHTML = `❌ Error: ${err.message}`;
+        console.error(err);
+      } finally {
+        setLoading(false);
+        userInput.focus();
+      }
+    });
+
+    // --- Auto-grow textarea ---
+    userInput.addEventListener("input", () => {
+      userInput.style.height = "auto";
+      userInput.style.height = Math.min(userInput.scrollHeight, 180) + "px";
+    });
+
+    // Enter to send, Shift+Enter for newline
+    userInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        chatForm.dispatchEvent(new Event("submit"));
+      }
+    });
+  </script>
+</body>
+</html>

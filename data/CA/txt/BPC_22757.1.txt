@@ -1,0 +1,35 @@
+State of California 
+BUSINESS AND PROFESSIONS CODE 
+Section  22757.1 
+22757.1. As used in this chapter: 
+(a)  “Artificial intelligence” or “AI” means an engineered or machine-based system 
+that varies in its le vel of autonomy and that can, for e xplicit or implicit objecti ves, 
+infer from the input it recei ves how to generate outputs that can influence ph ysical 
+or virtual environments. 
+(b)  “Covered provider” means a person that creates, codes, or otherwise produces 
+a generative artificial intelligence system that has over 1,000,000 monthly visitors or 
+users and is publicly accessible within the geographic boundaries of the state. 
+(c)  “Generative artificial intelligence system” or “GenAI system” means an artificial 
+intelligence that can generate derived synthetic content, including text, images, video, 
+and audio, that emulates the structure and characteristics of the system’s training data. 
+(d)  “Latent” means present but not manifest. 
+(e)  “Manifest” means easily percei ved, understood, or recognized by a natural 
+person. 
+(f)  “Metadata” means structural or descriptive information about data. 
+(g)  “Personal information” has the same meaning as defined in Section 1798.140 
+of the Civil Code. 
+(h)  “Personal provenance data” means provenance data that contains either of the 
+following: 
+(1)  Personal information. 
+(2)  Unique device, system, or service information that is reasonably capable of 
+being associated with a particular user. 
+(i)  “Provenance data” means data that is embedded into digital content, or that is 
+included in the digital content’ s metadata, for the purpose of v erifying the digital 
+content’s authenticity, origin, or history of modification. 
+(j)  “System provenance data” means provenance data that is not reasonably capable 
+of being associated with a particular user and that contains either of the following: 
+(1)  Information regarding the type of device, system, or service that w as used to 
+generate a piece of digital content. 
+(2)  Information related to content authenticity. 
+(Added by Stats. 2024, Ch. 291, Sec. 1.  (SB 942)  Ef fective January 1, 2025.  Operati ve January 1, 
+2026, pursuant to Section 22757.6.) 

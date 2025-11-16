@@ -1,0 +1,78 @@
+import os
+import json
+import requests
+from typing import Optional, List
+
+_ENV_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
+_ENV_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+_OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+try:
+    from openai import OpenAI as _OpenAI
+except:
+    _OpenAI = None
+
+try:
+    import anthropic as _anthropic
+except:
+    _anthropic = None
+
+class BaseLLMProvider:
+    name: str
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or _ENV_MODEL
+    def available(self) -> bool:
+        raise NotImplementedError
+    def chat(self, system: str, user: str, temperature: float = 0.0) -> str:
+        raise NotImplementedError
+
+class OpenAIProvider(BaseLLMProvider):
+    name = "openai"
+    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None):
+        super().__init__(model)
+        self.api_key = api_key or _OPENAI_KEY
+        self.client = _OpenAI(api_key=self.api_key) if (self.api_key and _OpenAI) else None
+    
+    def available(self) -> bool:
+        return self.client is not None
+    
+    def chat(self, system: str, user: str, temperature: float = 0.0) -> str:
+        if not self.available():
+            return "LLM unavailable; set OPENAI_API_KEY."
+        resp = self.client.chat.completions.create(
+            model=self.model, messages=[{"role":"system","content":system},
+            {"role":"user","content":user}], temperature=temperature)
+        return resp.choices[0].message.content.strip()
+
+class AnthropicProvider(BaseLLMProvider):
+    name = "anthropic"
+    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None):
+        super().__init__(model or "claude-3-5-sonnet-latest")
+        self.api_key = api_key or _ANTHROPIC_KEY
+        self.client = _anthropic.Anthropic(api_key=self.api_key) if (self.api_key and _anthropic) else None
+    
+    def available(self) -> bool:
+        return self.client is not None
+    
+    def chat(self, system: str, user: str, temperature: float = 0.0) -> str:
+        if not self.available():
+            return "LLM unavailable; set ANTHROPIC_API_KEY."
+        msg = self.client.messages.create(model=self.model, max_tokens=800,
+                                         temperature=temperature, system=system,
+                                         messages=[{"role": "user", "content": user}])
+        parts = []
+        for blk in msg.content:
+            if getattr(blk, "type", None) == "text":
+                parts.append(blk.text)
+            elif isinstance(blk, dict) and blk.get("type") == "text":
+                parts.append(blk.get("text", ""))
+        return "\n".join(parts).strip()
+
+def get_provider(name: Optional[str] = None, model: Optional[str] = None) -> BaseLLMProvider:
+    name = (name or _ENV_PROVIDER).lower()
+    if name == "openai":
+        return OpenAIProvider(model=model)
+    if name == "anthropic":
+        return AnthropicProvider(model=model)
+    return OpenAIProvider(model=model)
