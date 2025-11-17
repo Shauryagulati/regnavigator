@@ -67,6 +67,48 @@ RegNavigator – Project Documentation
 - GET `/api/v1/health` (`regnavigator/api.py:103`)
   - Response: `{ status: "ok" | "degraded", llm_available?: bool, error?: str }`
 
+**Multi‑Turn Chat & Query Rewriting**
+- Goals
+  - Allow follow‑ups like “What about small businesses?” to inherit prior context (topic, bill, definitions) without the user repeating themselves.
+  - Improve retrieval by turning context‑dependent utterances into standalone, unambiguous queries.
+
+- Current behavior (already implemented)
+  - Session memory: the backend keeps a short in‑memory history keyed by `session_id` (`regnavigator/api.py:17, 44, 47, 71-74`). The UI generates/persists a `session_id` in localStorage and sends it with each request (`index.html: API calls`).
+  - Contextualization heuristic: on each turn, `_build_contextual_query` concatenates up to 6 recent user/assistant lines and prefixes them as lightweight “Context: … Current question: …” (`regnavigator/api.py:28-41, 52`). This gives the retriever more signal without changing the user’s question.
+  - LLM grounding: the final answer uses only retrieved snippets and cites them (`regnavigator/llm.py:32-43`).
+
+- Query rewriting: recommended upgrade path
+  - Add an explicit “standalone rewrite” step before retrieval when the new utterance is context‑dependent (e.g., starts with pronouns, references prior entities, or is too short).
+  - Sketch prompt for rewriting step (tool/LLM call):
+    - System: “Rewrite the user’s follow‑up into a self‑contained regulatory research query. Keep original intent, include bill/code identifiers, jurisdiction, and any constraints mentioned in earlier turns. Do not answer.”
+    - Inputs: last N turns (summarized), current user message.
+    - Output: a single rewritten query string.
+  - Decision policy: run rewriting if heuristics fire (regex on pronouns/ellipses/short length) or always for safety; keep original as a fallback query if rewriting yields empty/invalid output.
+  - Pass rewritten query to the retriever and keep the original question for answer formatting.
+
+- Session summarization (optional, for longer chats)
+  - Maintain a rolling summary of the conversation theme (jurisdiction, bill names, definitions, scope) every 4–6 turns to cap token growth.
+  - Store summary alongside the raw messages; `_build_contextual_query` can prefer summary + last 2–3 raw turns.
+
+- Conversational retrieval strategies
+  - Entity carryover: persist extracted entities (e.g., “AB 489,” “thresholds,” “small business”) and append them as soft constraints to the rewritten query.
+  - Jurisdiction pinning: if a session starts with a jurisdiction, enforce it in retrieval filters (`where={"jurisdiction": …}` already supported in `VectorStore.query_hybrid`).
+  - Query fan‑out: for ambiguous follow‑ups, spawn 2–3 candidate rewrites and union results before reranking.
+
+- Guardrails
+  - If no hits are found, retry with: (a) original user query, (b) relaxed filters (remove headers/page), (c) BM25‑only mode; report “Not found in provided sources” if still empty.
+  - Cap history to avoid drift; drop older assistant messages first (keep user intent).
+
+- Example
+  - Turn 1: “What terms are prohibited under AB 489?” → standard retrieval.
+  - Turn 2: “And what are the penalties?”
+    - Rewriter output: “What penalties for violating prohibited terms under California AB 489?”
+    - Retrieval uses rewritten query; answer cites specific pages/sections.
+
+- Implementation hooks (where to add it)
+  - Before `HybridRetriever.retrieve` in `regnavigator/api.py:54-57`, insert a rewriting call producing `standalone_query`. Use `standalone_query` for retrieval while keeping `req.query` for final prompt.
+  - Optional: persist `summary` per `session_id` in `_sessions` or a simple in‑memory dict; rotate every few turns.
+
 **Citations & Traceability**
 - Each snippet retains page number, source filename, jurisdiction, header, and character offsets.
 - The UI displays chunk numbers and file/page badges; backend returns machine‑readable citation arrays for auditing.
@@ -141,3 +183,81 @@ RegNavigator – Project Documentation
 - `main.py:39` router mounting and app setup
 - `index.html:1` frontend client
 
+**Architecture Diagrams (Mermaid)**
+
+Flow – Query to Answer
+
+```mermaid
+flowchart LR
+  A[User in UI<br/>index.html] -->|POST /api/v1/chat| B[FastAPI Router<br/>regnavigator/api.py]
+  B --> C[_build_contextual_query<br/>short session history]
+  C --> D{Rewrite?}
+  D -- optional --> E[Standalone Query Rewriter]
+  D -- else --> F[Original Query]
+  E --> F
+  F --> G[Embed Query (E5)
+          regnavigator/embeddings.py]
+  G --> H[Hybrid Retrieval
+          VectorStore.query_hybrid]
+  H -->|dense| I[ChromaDB<br/>cosine similarity]
+  H -->|sparse| J[BM25 Index]
+  I --> K[Score Merge
+          MERGE_WEIGHT_*]
+  J --> K
+  K --> L[Cross‑Encoder Reranker
+          BGE reranker]
+  L --> M[Top‑K Snippets]
+  M --> N[LLM Answer
+          regnavigator/llm.py]
+  N --> O[Answer + Citations]
+  O --> P[UI Renders
+          Sources Used]
+```
+
+Flow – Ingestion Pipeline
+
+```mermaid
+flowchart LR
+  A[PDFs
+    data/<JUR>/pdfs] --> B[Load pages
+       PyPDFLoader]
+  B --> C[Chunk pages
+       600 chars, 100 overlap
+       regnavigator/chunker.py]
+  C --> D[Detect headers
+       ARTICLE/SECTION/AB/SB]
+  D --> E[Embed passages (E5)
+       regnavigator/embeddings.py]
+  E --> F[Store dense vectors
+       ChromaDB]
+  C --> G[Tokenize
+       BM25]
+  G --> H[Store sparse index
+       bm25_store/*.pkl]
+  F --> I[Ready for queries]
+  H --> I
+```
+
+Sequence – Single Chat Turn
+
+```mermaid
+sequenceDiagram
+  participant UI as Browser UI
+  participant API as FastAPI /chat
+  participant RET as Retriever
+  participant STO as ChromaDB+BM25
+  participant RER as BGE Reranker
+  participant LLM as LLM Provider
+
+  UI->>API: POST /api/v1/chat {query, session_id}
+  API->>API: Build contextual query (last ~3 turns)
+  API->>RET: retrieve(contextual_query, top_k)
+  RET->>STO: hybrid query (dense + BM25)
+  STO-->>RET: candidates + scores
+  RET->>RER: rerank(query, candidates)
+  RER-->>RET: rerank scores
+  RET-->>API: top‑K snippets + metadata
+  API->>LLM: Prompt with snippets (grounded)
+  LLM-->>API: Answer text
+  API-->>UI: {answer, citations, metadata}
+```
