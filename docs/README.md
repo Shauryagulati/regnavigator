@@ -52,7 +52,6 @@ RegNavigator – Project Documentation
 - Install: `pip install -r requirements.txt`.
 - Configure `.env` (examples):
   - `LLM_PROVIDER=openai` or `LLM_PROVIDER=anthropic` (or `claude` → Anthropic)
-  - `LLM_MODEL=gpt-4o-mini` or `claude-3-5-sonnet-20241022`
   - `OPENAI_API_KEY=...` and/or `ANTHROPIC_API_KEY=...`
   - Optional tuning: `MERGE_WEIGHT_DENSE`, `MERGE_WEIGHT_SPARSE`, `RERANK_WEIGHT`
 - Prepare data: place PDFs under `data/CA/pdfs` (and other jurisdictions similarly).
@@ -72,32 +71,10 @@ RegNavigator – Project Documentation
   - Allow follow‑ups like “What about small businesses?” to inherit prior context (topic, bill, definitions) without the user repeating themselves.
   - Improve retrieval by turning context‑dependent utterances into standalone, unambiguous queries.
 
-- Current behavior (already implemented)
+- Current behavior
   - Session memory: the backend keeps a short in‑memory history keyed by `session_id` (`regnavigator/api.py:17, 44, 47, 71-74`). The UI generates/persists a `session_id` in localStorage and sends it with each request (`index.html: API calls`).
   - Contextualization heuristic: on each turn, `_build_contextual_query` concatenates up to 6 recent user/assistant lines and prefixes them as lightweight “Context: … Current question: …” (`regnavigator/api.py:28-41, 52`). This gives the retriever more signal without changing the user’s question.
   - LLM grounding: the final answer uses only retrieved snippets and cites them (`regnavigator/llm.py:32-43`).
-
-- Query rewriting: recommended upgrade path
-  - Add an explicit “standalone rewrite” step before retrieval when the new utterance is context‑dependent (e.g., starts with pronouns, references prior entities, or is too short).
-  - Sketch prompt for rewriting step (tool/LLM call):
-    - System: “Rewrite the user’s follow‑up into a self‑contained regulatory research query. Keep original intent, include bill/code identifiers, jurisdiction, and any constraints mentioned in earlier turns. Do not answer.”
-    - Inputs: last N turns (summarized), current user message.
-    - Output: a single rewritten query string.
-  - Decision policy: run rewriting if heuristics fire (regex on pronouns/ellipses/short length) or always for safety; keep original as a fallback query if rewriting yields empty/invalid output.
-  - Pass rewritten query to the retriever and keep the original question for answer formatting.
-
-- Session summarization (optional, for longer chats)
-  - Maintain a rolling summary of the conversation theme (jurisdiction, bill names, definitions, scope) every 4–6 turns to cap token growth.
-  - Store summary alongside the raw messages; `_build_contextual_query` can prefer summary + last 2–3 raw turns.
-
-- Conversational retrieval strategies
-  - Entity carryover: persist extracted entities (e.g., “AB 489,” “thresholds,” “small business”) and append them as soft constraints to the rewritten query.
-  - Jurisdiction pinning: if a session starts with a jurisdiction, enforce it in retrieval filters (`where={"jurisdiction": …}` already supported in `VectorStore.query_hybrid`).
-  - Query fan‑out: for ambiguous follow‑ups, spawn 2–3 candidate rewrites and union results before reranking.
-
-- Guardrails
-  - If no hits are found, retry with: (a) original user query, (b) relaxed filters (remove headers/page), (c) BM25‑only mode; report “Not found in provided sources” if still empty.
-  - Cap history to avoid drift; drop older assistant messages first (keep user intent).
 
 - Example
   - Turn 1: “What terms are prohibited under AB 489?” → standard retrieval.
@@ -120,59 +97,12 @@ RegNavigator – Project Documentation
 - Top‑K fanout: retriever expands to ~3× target before rerank (`regnavigator/retriever.py:21`).
 - Hardware: reranker benefits from GPU; embeddings are precomputed.
 
-**Security & Privacy**
-- Data stays local in ChromaDB/BM25 stores; only prompts/snippets go to the LLM provider.
-- Redact or pre‑filter sensitive PDFs before ingestion if required; consider adding an allowlist for snippet export.
-- Lock down CORS in `main.py:29-35` for deployment; add auth if exposing beyond trusted networks.
-
 **Troubleshooting**
 - Run `python check_system.py` to validate env, deps, indexes, provider readiness.
 - Empty answers: verify ingestion ran and `chroma_store/` + `bm25_store/` are populated; confirm `.env` keys and provider.
 - Slow/expensive queries: lower `top_k`, reduce `RERANK_WEIGHT`, or use a lighter reranker model.
 - Model download issues: ensure network access on first run; pre‑populate Hugging Face caches when air‑gapped.
 
-**Is It Multi‑Agent?**
-- Current design: single‑pipeline RAG with one “answering” agent (LLM) operating over a deterministic retrieval stack.
-- Why not multi‑agent yet:
-  - The retrieval + rerank pipeline already reduces hallucination with grounded snippets.
-  - Simplicity, latency, and cost: one LLM call per question (post‑retrieval) is predictable and fast.
-
-**Path to Multi‑Agent**
-- Planner agent: decomposes complex questions into sub‑queries, selects jurisdictions/sections to target.
-- Retrieval agents: specialized dense/sparse retrievers per domain; could vote or union candidates.
-- Critic/Judge agent: checks answer faithfulness to snippets; requests additional retrieval if gaps found.
-- Citation agent: extracts and formats pinpoint citations (sections, paragraphs) and confidence scoring.
-- Orchestrator: tool‑calling runtime that coordinates agents via function calls (e.g., “retrieve”, “rerank”, “expand_scope”).
-- Implementation sketch:
-  - Expose retriever/reranker as callable tools behind FastAPI or local Python functions.
-  - Use a controller LLM to plan and call tools iteratively up to a budget (latency/cost guardrails).
-  - Add automated self‑consistency (n‑best answers) and agreement checks before finalizing.
-
-**Roadmap**
-- Short‑term
-  - Add per‑jurisdiction filters in the UI; allow dataset switching.
-  - Streaming answers and partial result rendering.
-  - Export answers + citations as a report (PDF/Docx).
-- Mid‑term
-  - Add structured evaluators: answer faithfulness and coverage tests with golden Q/A sets.
-  - Scale reranker and caching; optional approximate BM25.
-  - Add user auth and per‑tenant stores.
-- Long‑term
-  - Multi‑agent orchestration as above with planner/critic loops.
-  - Domain‑adaptive reranker fine‑tuning on internal Q/A pairs.
-  - Continuous ingestion watch to auto‑index new regulations.
-
-**FAQ (Stakeholder Prep)**
-- What guarantees correctness? Grounded prompting + citations, hybrid retrieval, and cross‑encoder reranking reduce hallucinations.
-- Can it handle follow‑ups? Yes; short session history is folded into the retriever’s contextual query (`regnavigator/api.py:28, 52`).
-- How do we add a new jurisdiction? Place PDFs under `data/<JURISDICTION>/pdfs`, run ingestion, then query with that code.
-- What if providers are offline? The API returns clear errors; choose the other provider or run a local LLM as a future option.
-- How big can the corpus be? ChromaDB handles large collections; BM25 and reranking scale linearly. Shard by jurisdiction as needed.
-
-**Presenting the Demo**
-- Start API: `python main.py` → check `/health` reports `{"status": "ok"}`.
-- Open UI: `index.html`, ask a question, point out the “Sources Used” with file/page and headers.
-- Show traceability: hover or read chunk numbers map to backend `citations` objects.
 
 **Key Files (Quick Links)**
 - `regnavigator/api.py:44` chat endpoint
